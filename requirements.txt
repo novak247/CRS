@@ -1,0 +1,4 @@
+numpy
+ctu_crs
+pypylon
+opencv-python
