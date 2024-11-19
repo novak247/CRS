@@ -33,37 +33,52 @@ def main():
     y = np.arange(-0.2, 0.2, 0.1)
     z = np.arange(-0.1, 0.1, 0.1)
 
-    # while True:
-    #     # Input target XYZ offsets
-    #     try:
-    #         print(robot.fk_flange_pos(robot.get_q()))
-    #         x = float(input("Enter X offset (m): "))
-    #         y = float(input("Enter Y offset (m): "))
-    #         z = float(input("Enter Z offset (m): "))
-    #     except ValueError:
-    #         print("Invalid input. Please enter numerical values.")
-    #         continue
+    # Input target XYZ offsets
+    try:
+        print(robot.fk_flange_pos(robot.get_q()))
+        x1 = float(input("Enter X offset (m): "))
+        y1 = float(input("Enter Y offset (m): "))
+        z1 = float(input("Enter Z offset (m): "))
+    except ValueError:
+        print("Invalid input. Please enter numerical values.")
 
-    #     xyz_offset = np.array([x, y, z])
+    move_robot_to_xyz(robot, q0, np.array([x1, y1, z1]))
+    # Define the bounds for the total offsets from the initial position
+    x_bounds = np.arange(-0.2, 0.05, 0.05)
+    y_bounds = np.arange(-0.2, 0.2, 0.1)
+    z_bounds = np.arange(-0.1, 0.1, 0.1)
 
-    #     # Move robot and take image
-    #     try:
-    #         if move_robot_to_xyz(robot, q0, xyz_offset):
-    #             print(f"Robot moved to the new position with offset: {xyz_offset}")
-    #             img = camera.grab_image()
-    #             if (img is not None) and (img.size > 0):
-    #                 x, y, z = robot.fk_flange_pos(robot.get_q())
-    #                 cv2.imwrite(f"images/X{x}Y{y}Z{z}.png", img)
-    #         else:
-    #             print("Robot movement failed.")
-    #     except AssertionError:
-    #         print("Asi spatny limity bracho")
-    #         continue
+    # Initialize the cumulative offset
+    cumulative_offset = np.array([0.0, 0.0, 0.0])
 
-    #     # Ask if user wants to continue
-    #     cont = input("Do you want to move the robot again? (yes/no): ").strip().lower()
-    #     if cont != 'yes':
-    #         break
+    # Main iteration loop
+    for i in x_bounds:
+        for j in y_bounds:
+            for k in z_bounds:
+                # Calculate the desired relative offset
+                relative_offset = np.array([i, j, k]) - cumulative_offset
+
+                # Check if the total offset exceeds the bounds
+                proposed_offset = cumulative_offset + relative_offset
+                if (np.abs(proposed_offset) > np.array([0.2, 0.2, 0.1])).any():
+                    print(f"Skipping offset {[i, j, k]} as it exceeds bounds.")
+                    continue
+
+                try:
+                    # Move the robot with the relative offset
+                    if move_robot_to_xyz(robot, q0, relative_offset):
+                        # Update the cumulative offset after a successful move
+                        cumulative_offset += relative_offset
+                        print(f"Robot moved to the new position with total offset: {cumulative_offset}")
+                        img = camera.grab_image()
+                        if (img is not None) and (img.size > 0):
+                            x2, y2, z2 = robot.fk_flange_pos(robot.get_q())
+                            cv2.imwrite(f"images/X{x2}Y{y2}Z{z2}.png", img)
+                    else:
+                        print("Robot movement failed.")
+                except AssertionError:
+                    print("Asi spatny limity bracho")
+                    continue
 
     robot.close()
 
