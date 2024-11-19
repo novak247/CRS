@@ -2,3 +2,4 @@ numpy
 ctu_crs
 pypylon
 opencv-python
+opencv-contrib-python
