@@ -60,41 +60,6 @@ def match_csv_row(filename, csv_data):
 
     raise ValueError(f"Cannot find matching row in CSV for filename: {filename}")
 
-
-# Transformation from gripper to marker center (rotation + translation)
-gripper_to_marker_translation = np.array([0.0, 0.0, -0.10])  # Translation in meters
-# Define the inverse of the combined rotation matrix
-theta_x1 = math.radians(180)  # First rotation around X-axis
-theta_z = math.radians(-90)   # Rotation around Z-axis
-theta_y = math.radians(-90)  # Second rotation around X-axis
-
-# Rotation matrix for 180° around X-axis
-R_x1 = np.array([
-    [1,  0,           0],
-    [0,  math.cos(theta_x1), -math.sin(theta_x1)],
-    [0,  math.sin(theta_x1),  math.cos(theta_x1)]
-])
-
-# Rotation matrix for -90° around Z-axis
-R_z = np.array([
-    [math.cos(theta_z), -math.sin(theta_z), 0],
-    [math.sin(theta_z),  math.cos(theta_z), 0],
-    [0,                 0,                 1]
-])
-
-R_y = np.array([
-    [math.cos(theta_y),  0, math.sin(theta_y)],
-    [0,                 1, 0],
-    [-math.sin(theta_y), 0, math.cos(theta_y)]
-])
-R_combined = R_y @ R_z @ R_x1
-
-# Combine into a 4x4 transformation matrix
-T_gripper_to_marker = np.eye(4)
-T_gripper_to_marker[:3, :3] = R_combined
-T_gripper_to_marker[:3, 3] = gripper_to_marker_translation
-
-
 # Camera parameters (replace with actual values)
 data = np.load('calibration_data.npz')
 camera_matrix = data['K']
@@ -102,7 +67,7 @@ dist_coeffs = data['dist']
 
 # Paths to images and CSV
 csv_path = "transformations.csv"  # Replace with the actual path to your CSV
-image_folder = "images/"  # Replace with the actual path to your images
+image_folder = "/home/michalnovak/images/"  # Replace with the actual path to your images
 image_paths = [os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith(".png")]
 
 # Load the CSV data
@@ -138,12 +103,11 @@ for image_path in image_paths:
             T_bg = np.eye(4)
             T_bg[:3, :3] = R_bg
             T_bg[:3, 3] = t_bg
-            T_bm = np.dot(T_bg, T_gripper_to_marker)
 
             camera_rotations.append(rotation_matrix)
             camera_translations.append(tvecs[0].ravel())
-            robot_rotations.append(T_bm[:3, :3])
-            robot_translations.append(T_bm[:3, 3])
+            robot_rotations.append(T_bg[:3, :3])
+            robot_translations.append(T_bg[:3, 3])
         except ValueError as e:
             print(f"Error: {e}. Skipping image {image_path}")
     else:
@@ -151,28 +115,25 @@ for image_path in image_paths:
         not_detected +=1
 
 
-print("not detected: ", not_detected)
-# Hand-eye calibration
-print("R_gripper2base size:", len(robot_rotations))
-print("t_gripper2base size:", len(robot_translations))
-print("R_target2cam size:", len(camera_rotations))
-print("t_target2cam size:", len(camera_translations))
-
-R_gripper_to_camera, t_gripper_to_camera, R_base_to_camera, t_base_to_camera= cv2.calibrateRobotWorldHandEye(
+R_gripper_to_marker, t_gripper_to_marker, R_camera_to_base, t_camera_to_base= cv2.calibrateRobotWorldHandEye(
     camera_rotations, camera_translations,
     robot_rotations, robot_translations,
     method=cv2.CALIB_ROBOT_WORLD_HAND_EYE_SHAH  # You can choose other methods as well
 )
 
 # Create SE(3) matrix for T_base->T_camera
+T_camera_to_base = np.eye(4)
+T_camera_to_base[:3, :3] = R_camera_to_base
+T_camera_to_base[:3, 3] = t_camera_to_base.ravel()
+np.save("T_camera_to_base.npy", T_camera_to_base)
 T_base_to_camera = np.eye(4)
-T_base_to_camera[:3, :3] = R_base_to_camera
-T_base_to_camera[:3, 3] = t_base_to_camera.ravel()
-np.save("T_base_to_camera.npy", T_base_to_camera)
-T_gripper_to_camera = np.eye(4)
-T_gripper_to_camera[:3, :3] = R_gripper_to_camera
-T_gripper_to_camera[:3, 3] = t_gripper_to_camera.ravel()
-np.save("T_gripper_to_camera.npy", T_gripper_to_camera)
+T_base_to_camera[:3, :3] = R_camera_to_base.T
+T_base_to_camera[:3, 3] = -R_camera_to_base.T @ T_camera_to_base[:3, 3]
+np.save("T_base_to_camera.npy",T_base_to_camera)
+T_gripper_to_marker = np.eye(4)
+T_gripper_to_marker[:3, :3] = R_gripper_to_marker
+T_gripper_to_marker[:3, 3] = t_gripper_to_marker.ravel()
+np.save("T_gripper_to_marker.npy", T_gripper_to_marker)
 # Output the transformation matrix
 print("Transformation matrix T_base->T_camera (SE(3)):\n", T_base_to_camera)
-print("Transformation matrix T_gripper->T_camera (SE(3)):\n", T_gripper_to_camera)
+print("Transformation matrix T_gripper->T_marker (SE(3)):\n", T_gripper_to_marker)

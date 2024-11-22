@@ -23,7 +23,7 @@ corners, ids, _ = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
 if ids is not None and len(corners) > 0:
     for i, corner in enumerate(corners):
         # Estimate pose of each marker
-        rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers([corner], markerLength=0.06, cameraMatrix=camera_matrix, distCoeffs=dist_coeffs)
+        rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers([corner], markerLength=0.036, cameraMatrix=camera_matrix, distCoeffs=dist_coeffs)
 
         # Draw the marker and its axes
         cv2.aruco.drawDetectedMarkers(img, [corner], ids[i])
@@ -43,17 +43,11 @@ if ids is not None and len(corners) > 0:
         T_base_to_marker = T_base_to_camera @ T_camera_to_marker
         t_base = T_base_to_marker[:3, 3]  # Extract translation in the base frame
 
-        # Calculate axes in the base frame
-        x_axis_base = T_base_to_marker @ np.array([0.05, 0, 0, 1])
-        y_axis_base = T_base_to_marker @ np.array([0, 0.05, 0, 1])
-        z_axis_base = T_base_to_marker @ np.array([0, 0, 0.05, 1])
+    
 
         # Print the coordinates in the base frame
         print(f"Marker ID {ids[i]} in base frame:")
         print(f"  Origin: {t_base}")
-        print(f"  X-axis: {x_axis_base[:3]}")
-        print(f"  Y-axis: {y_axis_base[:3]}")
-        print(f"  Z-axis: {z_axis_base[:3]}")
 
     # Show the image with markers and axes drawn
     while True:
