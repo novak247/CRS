@@ -1,19 +1,20 @@
 import numpy as np
-from ctu_crs import CRS93
+from ctu_crs import CRS97
 from pypylon import pylon
 from basler_camera import BaslerCamera
 import cv2
 import math
 import csv
+import time
 
-def move_robot_to_xyz(robot, q0, xyz_offset):
-  current_pose = robot.fk(robot.get_q())
+def move_robot_to_xyz(robot, qnow, xyz_offset):
+  current_pose = robot.fk(qnow)
   current_pose[:3, 3] += xyz_offset
   ik_sols = robot.ik(current_pose)
   if len(ik_sols) == 0:
     print("No IK solution found for the given offset.")
     return False
-  closest_solution = min(ik_sols, key=lambda q: np.linalg.norm(q - q0))
+  closest_solution = min(ik_sols, key=lambda q: np.linalg.norm(q - qnow))
   robot.move_to_q(closest_solution)
   robot.wait_for_motion_stop()
   return True
@@ -27,11 +28,11 @@ def rotate_joint(robot, q_current, joint_5_angle, joint_6_angle):
 
 def main():
   camera: BaslerCamera = BaslerCamera()
-  camera.connect_by_name("camera-crs93")
+  camera.connect_by_name("camera-crs97")
   camera.open()
   camera.set_parameters()
   camera.start()
-  robot = CRS93()
+  robot = CRS97()
   robot.initialize()
   q0 = robot.q_home
   robot.move_to_q(robot.get_q() + [0, 0, -math.pi/4, 0, -math.pi/4, 0])
@@ -45,63 +46,52 @@ def main():
     z1 = float(input("Enter Z offset (m): "))
   except ValueError:
     print("Invalid input. Please enter numerical values.")
-
-  move_robot_to_xyz(robot, q0, np.array([x1, y1, z1]))
+  q_now = robot.get_q()
+  move_robot_to_xyz(robot, q_now, np.array([x1, y1, z1]))
   # Define the bounds for the total offsets from the initial position
   x_bounds = np.arange(-0.2, 0.05, 0.05)
   y_bounds = np.arange(-0.2, 0.2, 0.1)
-  z_bounds = np.arange(-0.1, 0.1, 0.1)
+  z_bounds = np.arange(0.0, 0.15, 0.05)
   joint_6_angles = np.arange(-np.pi/2, np.pi/2 + np.pi/4, np.pi/4)
-  joint_5_angles = np.arange(-np.pi/12, np.pi/12 + np.pi/24, np.pi/24)
+  joint_5_angles = np.arange(-np.pi/8, np.pi/8 + np.pi/16, np.pi/16)
 
-  # Initialize the cumulative offset
-  cumulative_offset = np.array([0.0, 0.0, 0.0])
+ 
 
     # Main iteration loop
   with open("transformations.csv", mode="w", newline="") as file:
     writer = csv.writer(file)
     # Write the header
     writer.writerow(["x", "y", "z", "joint_5", "joint_6"] + [f"T_bg_{i}" for i in range(16)])
-  
+    q_now = robot.get_q()
     for i in x_bounds:
       for j in y_bounds:
         for k in z_bounds:
+          
           # Calculate the desired relative offset
-          relative_offset = np.array([i, j, k]) - cumulative_offset
-
-          # Check if the total offset exceeds the bounds
-          proposed_offset = cumulative_offset + relative_offset
-          if (np.abs(proposed_offset) > np.array([0.2, 0.2, 0.1])).any():
-            print(f"Skipping offset {[i, j, k]} as it exceeds bounds.")
-            continue
-
+          offset = np.array([i, j, k])
           try:
             # Move the robot to the new XYZ position
-            if move_robot_to_xyz(robot, q0, relative_offset):
-              # Update the cumulative offset after a successful move
-              cumulative_offset += relative_offset
-              print(f"Robot moved to the new position with total offset: {cumulative_offset}")
+            if move_robot_to_xyz(robot, q_now, offset):
+              print(f"Robot moved to the new position with total offset: {offset}")
               q_current = robot.get_q()
               # Iterate through joint 5 and joint 6 angles
-              for joint_5 in joint_5_angles:
-                for joint_6 in joint_6_angles:
-                  try:
-                    rotate_joint(robot, q_current, joint_5, joint_6)
-                    print(f"Rotated to joint_5: {joint_5}, joint_6: {joint_6}")
-                    
-                    # Capture and save the image
-                    img = camera.grab_image()
-                    if (img is not None) and (img.size > 0):
-                      x2, y2, z2 = robot.fk_flange_pos(robot.get_q()) 
-                      cv2.imwrite(
-                          f"images/X{x2}Y{y2}Z{z2}_J5{joint_5}_J6{joint_6}.png", img
-                      )
-                      T_bg = robot.fk(robot.get_q())
-                      flattened_T_bg = T_bg.flatten()
-                      writer.writerow([*cumulative_offset, joint_5, joint_6, *flattened_T_bg])  
-                  except AssertionError:
-                    print(f"Failed to rotate to joint_5: {joint_5}, joint_6: {joint_6}")
+              for q5 in joint_5_angles:
+                for q6 in joint_6_angles:
+                  if k == 0 and q5 == -np.pi/8:
                     continue
+                  robot.move_to_q(q_current + [0, 0, 0, 0, q5, q6])
+                  robot.wait_for_motion_stop()
+                  time.sleep(0.1)
+                  img = camera.grab_image()
+                  if (img is not None) and (img.size > 0):
+                    x2, y2, z2 = robot.fk_flange_pos(robot.get_q()) 
+                    cv2.imwrite(
+                        f"images/X{x2}Y{y2}Z{z2}_J5{q5}_J6{q6}.png", img
+                    )
+                    T_bg = robot.fk(robot.get_q())
+                    flattened_T_bg = T_bg.flatten()
+                    writer.writerow([*offset, q5, q6, *flattened_T_bg])
+              robot.move_to_q(q_current)
             else:
                 print("Robot movement failed.")
           except AssertionError:
@@ -112,3 +102,51 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+# "for joint_5 in joint_5_angles:
+#                 try:
+#                   rotate_joint(robot, q_current, joint_5, 0)
+#                   print(f"Rotated to joint_5: {joint_5}, joint_6: {0}")
+                  
+#                   # Capture and save the image
+#                   img = camera.grab_image()
+#                   if (img is not None) and (img.size > 0):
+#                     x2, y2, z2 = robot.fk_flange_pos(robot.get_q()) 
+#                     cv2.imwrite(
+#                         f"images/X{x2}Y{y2}Z{z2}_J5{joint_5}_J6{0}.png", img
+#                     )
+#                     T_bg = robot.fk(robot.get_q())
+#                     flattened_T_bg = T_bg.flatten()
+#                     writer.writerow([*offset, joint_5, 0, *flattened_T_bg])  
+#                 except AssertionError:
+#                   print(f"Failed to rotate to joint_5: {joint_5}, joint_6: {0}")
+                  
+#               try:
+#                 rotate_joint(robot, q_current, 0, 0)
+#               except:
+#                 print("Failed to rotate to joint_5: 0, joint_6: 0")
+#               for joint_6 in joint_6_angles:
+#                 try:
+#                   rotate_joint(robot, q_current, 0, joint_6)
+#                   print(f"Rotated to joint_5: {0}, joint_6: {joint_6}")
+                  
+#                   # Capture and save the image
+#                   img = camera.grab_image()
+#                   if (img is not None) and (img.size > 0):
+#                     x2, y2, z2 = robot.fk_flange_pos(robot.get_q()) 
+#                     cv2.imwrite(
+#                         f"images/X{x2}Y{y2}Z{z2}_J5{0}_J6{joint_6}.png", img
+#                     )
+#                     T_bg = robot.fk(robot.get_q())
+#                     flattened_T_bg = T_bg.flatten()
+#                     writer.writerow([*offset, 0, joint_6, *flattened_T_bg])  
+#                 except AssertionError:
+#                   print(f"Failed to rotate to joint_5: {0}, joint_6: {joint_6}")
+#               try:
+#                 rotate_joint(robot, q_current, 0, 0)
+#               except:
+#                 print("Failed to rotate to joint_5: 0, joint_6: 0")"

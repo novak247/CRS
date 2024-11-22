@@ -1,82 +1,178 @@
 import cv2
 import cv2.aruco as aruco
 import numpy as np
-import glob
 import re
+import os
+import math
 
-# Funkce pro extrakci translací z názvů souborů
-def extract_translation_from_filename(filename):
-    match = re.search(r'X([-+]?[0-9]*\.?[0-9]+)Y([-+]?[0-9]*\.?[0-9]+)Z([-+]?[0-9]*\.?[0-9]+)', filename)
+# Load CSV file and parse it into a list of dictionaries
+def load_csv(csv_path):
+    with open(csv_path, "r") as file:
+        lines = file.readlines()
+        headers = lines[0].strip().split(",")
+        data = [dict(zip(headers, line.strip().split(","))) for line in lines[1:]]
+    return data
+
+# Extract rotation and translation matrix from a CSV entry
+def extract_robot_transformation(entry):
+    T_bg = np.array([float(entry[f"T_bg_{i}"]) for i in range(16)]).reshape(4, 4)
+    return T_bg[:3, :3], T_bg[:3, 3]  # Return rotation and translation
+
+# Function to translate CSV offsets to approximate image values
+def translate_csv_to_image_values(csv_x, csv_y, csv_z):
+    # Map x offsets to approximate image values
+    image_x = 0.38 + csv_x
+
+    # y values are assumed to match directly
+    image_y = csv_y
+
+    # z value in the image is approximately 0.26 + csv_z
+    image_z = 0.26 + csv_z
+
+    return image_x, image_y, image_z
+
+# Updated match_csv_row function
+def match_csv_row(filename, csv_data):
+    match = re.search(
+        r'X([-+]?[0-9]*\.?[0-9]+)Y([-+]?[0-9]*\.?[0-9]+)Z([-+]?[0-9]*\.?[0-9]+)_J5([-+]?[0-9]*\.?[0-9]+)_J6([-+]?[0-9]*\.?[0-9]+)',
+        filename
+    )
     if match:
-        x = float(match.group(1))
-        y = float(match.group(2))
-        z = float(match.group(3))
-        return np.array([x, y, z])
-    else:
-        raise ValueError(f"Nelze extrahovat translaci z názvu souboru: {filename}")
+        image_x = float(match.group(1))
+        image_y = float(match.group(2))
+        image_z = float(match.group(3))
+        joint_5 = match.group(4)
+        joint_6 = match.group(5)
 
-# Přidání vektoru translace od gripperu ke středu markeru
-gripper_to_marker_translation = np.array([0.13, -0.03, -0.15])  # V mm (převod na metry, pokud je potřeba)
+        for row in csv_data:
+            csv_x, csv_y, csv_z = float(row["x"]), float(row["y"]), float(row["z"])
+            approx_image_x, approx_image_y, approx_image_z = translate_csv_to_image_values(csv_x, csv_y, csv_z)
 
-# Parametry kamery (nahraďte skutečnými hodnotami z vaší kalibrace)
-camera_matrix = np.array([[1.23781535e+04, 0, 8.73297003e+02],
-                          [0, 1.23969122e+04, 5.59542074e+02],
-                          [0, 0, 1]])
-dist_coeffs = np.array([-2.45263371e+00,  9.80828533e+01,  2.02541409e-02,  1.09737521e-02,   6.12911283e-01])  # Nebo použijte skutečné zkreslovací koeficienty
+            # Check for match within a tolerance
+            if (
+                abs(image_x - approx_image_x) < 0.03 and  # Adjust tolerance as needed
+                abs(image_y - approx_image_y) < 0.03 and
+                abs(image_z - approx_image_z) < 0.03 and
+                row["joint_5"] == joint_5 and
+                row["joint_6"] == joint_6
+            ):
+                return row
 
-# Cesty k obrázkům s ArUco markery
-image_paths = ['images/X0.3305139639208873Y-0.10039639690878899Z0.41029718670543414.png', 'images/X0.3798957533959076Y0.09988492405723545Z0.41049852405412945.png',
-'images/X0.3799044841576267Y-0.0015396300550540522Z0.4105613205042755.png', 'images/X0.3800826965933747Y0.09960222869450001Z0.3097266742190109.png',
-'images/X0.3801069416216306Y-0.0007343977366757379Z0.4103652212283435.png', 'images/X0.3801693779762797Y-0.10139472508223313Z0.41046033423400363.png',
-'images/X0.3801950644047894Y-0.0006270700297724952Z0.3097778472970399.png', 'images/X0.32979939292788796Y0.10067749524885185Z0.4100805803328725.png',
-'images/X0.38036924267966765Y-0.10089144742506458Z0.3097248936709808.png']  # Nahraďte cestou ke složce s obrázky
+    raise ValueError(f"Cannot find matching row in CSV for filename: {filename}")
 
-# Seznamy pro ukládání rotačních a translačních vektorů z kamery (T_CT)
+
+# Transformation from gripper to marker center (rotation + translation)
+gripper_to_marker_translation = np.array([0.0, 0.0, -0.10])  # Translation in meters
+# Define the inverse of the combined rotation matrix
+theta_x1 = math.radians(180)  # First rotation around X-axis
+theta_z = math.radians(-90)   # Rotation around Z-axis
+theta_y = math.radians(-90)  # Second rotation around X-axis
+
+# Rotation matrix for 180° around X-axis
+R_x1 = np.array([
+    [1,  0,           0],
+    [0,  math.cos(theta_x1), -math.sin(theta_x1)],
+    [0,  math.sin(theta_x1),  math.cos(theta_x1)]
+])
+
+# Rotation matrix for -90° around Z-axis
+R_z = np.array([
+    [math.cos(theta_z), -math.sin(theta_z), 0],
+    [math.sin(theta_z),  math.cos(theta_z), 0],
+    [0,                 0,                 1]
+])
+
+R_y = np.array([
+    [math.cos(theta_y),  0, math.sin(theta_y)],
+    [0,                 1, 0],
+    [-math.sin(theta_y), 0, math.cos(theta_y)]
+])
+R_combined = R_y @ R_z @ R_x1
+
+# Combine into a 4x4 transformation matrix
+T_gripper_to_marker = np.eye(4)
+T_gripper_to_marker[:3, :3] = R_combined
+T_gripper_to_marker[:3, 3] = gripper_to_marker_translation
+
+
+# Camera parameters (replace with actual values)
+data = np.load('calibration_data.npz')
+camera_matrix = data['K']
+dist_coeffs = data['dist']
+
+# Paths to images and CSV
+csv_path = "transformations.csv"  # Replace with the actual path to your CSV
+image_folder = "images/"  # Replace with the actual path to your images
+image_paths = [os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith(".png")]
+
+# Load the CSV data
+robot_data = load_csv(csv_path)
+
 camera_rotations = []
 camera_translations = []
 robot_rotations = []
 robot_translations = []
-
+not_detected = 0
 for image_path in image_paths:
-    # Načtení obrázku
     img = cv2.imread(image_path)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # Detekce markerů
     aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
     parameters = aruco.DetectorParameters()
     corners, ids, _ = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
 
-    if ids is not None:
-        # Najdeme největší marker podle plochy
+    if ids is not None and len(corners) > 0:
         largest_marker_index = np.argmax([cv2.contourArea(corner) for corner in corners])
-
-        # Odhad pozice a orientace pro největší marker
-        rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers([corners[largest_marker_index]], markerLength=0.08, cameraMatrix=camera_matrix, distCoeffs=dist_coeffs)
+        rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers([corners[largest_marker_index]], markerLength=0.06, cameraMatrix=camera_matrix, distCoeffs=dist_coeffs)
 
         rotation_matrix, _ = cv2.Rodrigues(rvecs[0])
-        camera_rotations.append(rotation_matrix)
-        camera_translations.append(tvecs[0].ravel())
+        
 
-        # Extrakce translace z názvu souboru pro T_RG a přičtení vektoru od gripperu ke středu markeru
-        translation = extract_translation_from_filename(image_path) + gripper_to_marker_translation
-        print(translation)
-        robot_rotations.append(np.array([[0, 1, 0], [-1, 0, 0], [0, 1, 0]]))  
-        robot_translations.append(translation)
+        try:
+            
+            # Match the CSV entry and extract transformation
+            csv_row = match_csv_row(os.path.basename(image_path), robot_data)
+            R_bg, t_bg = extract_robot_transformation(csv_row)
+
+            # Combine transformations: T_base_to_gripper * T_gripper_to_marker
+            T_bg = np.eye(4)
+            T_bg[:3, :3] = R_bg
+            T_bg[:3, 3] = t_bg
+            T_bm = np.dot(T_bg, T_gripper_to_marker)
+
+            camera_rotations.append(rotation_matrix)
+            camera_translations.append(tvecs[0].ravel())
+            robot_rotations.append(T_bm[:3, :3])
+            robot_translations.append(T_bm[:3, 3])
+        except ValueError as e:
+            print(f"Error: {e}. Skipping image {image_path}")
     else:
-        print(f"ArUco marker nebyl detekován v obrázku {image_path}")
+        print(f"Warning: ArUco marker not detected in image {image_path}. Skipping.")
+        not_detected +=1
 
-# Kalibrace oko-ruka
-hand_eye_rotation, hand_eye_translation = cv2.calibrateHandEye(
-    robot_rotations, robot_translations,
+
+print("not detected: ", not_detected)
+# Hand-eye calibration
+print("R_gripper2base size:", len(robot_rotations))
+print("t_gripper2base size:", len(robot_translations))
+print("R_target2cam size:", len(camera_rotations))
+print("t_target2cam size:", len(camera_translations))
+
+R_gripper_to_camera, t_gripper_to_camera, R_base_to_camera, t_base_to_camera= cv2.calibrateRobotWorldHandEye(
     camera_rotations, camera_translations,
-    method=cv2.CALIB_HAND_EYE_TSAI  # Můžete zkusit jiné metody: PARK, HORAUD, ANDREFF
+    robot_rotations, robot_translations,
+    method=cv2.CALIB_ROBOT_WORLD_HAND_EYE_SHAH  # You can choose other methods as well
 )
 
-# Vytvoření SE(3) matice 4x4 pro T_base->T_camera
+# Create SE(3) matrix for T_base->T_camera
 T_base_to_camera = np.eye(4)
-T_base_to_camera[:3, :3] = hand_eye_rotation
-T_base_to_camera[:3, 3] = hand_eye_translation.ravel()
-
-# Výstup výsledné transformace
-print("Transformační matice T_base->T_camera (SE(3)):\n", T_base_to_camera)
+T_base_to_camera[:3, :3] = R_base_to_camera
+T_base_to_camera[:3, 3] = t_base_to_camera.ravel()
+np.save("T_base_to_camera.npy", T_base_to_camera)
+T_gripper_to_camera = np.eye(4)
+T_gripper_to_camera[:3, :3] = R_gripper_to_camera
+T_gripper_to_camera[:3, 3] = t_gripper_to_camera.ravel()
+np.save("T_gripper_to_camera.npy", T_gripper_to_camera)
+# Output the transformation matrix
+print("Transformation matrix T_base->T_camera (SE(3)):\n", T_base_to_camera)
+print("Transformation matrix T_gripper->T_camera (SE(3)):\n", T_gripper_to_camera)

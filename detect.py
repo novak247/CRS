@@ -9,7 +9,7 @@ camera_matrix = np.array([[1.23781535e+04, 0, 8.73297003e+02],
 dist_coeffs = np.array([-2.45263371e+00,  9.80828533e+01,  2.02541409e-02,  1.09737521e-02,   6.12911283e-01])  # Nebo použijte skutečné zkreslovací koeficienty
 
 # Načtení obrázku
-image_path = 'images/X0.38011945093997723Y-0.2021122462273852Z0.3097052118707556.png'  # Nahraďte cestou k obrázku
+image_path = 'images/X0.379993225757693Y-0.10054258509610073Z0.31032521607625085_J50.0_J6-0.7853981633974483.png'  # Nahraďte cestou k obrázku
 img = cv2.imread(image_path)
 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
