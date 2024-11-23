@@ -39,6 +39,36 @@ class HoleTransformer:
             transformed_positions.append(hole_in_base[:3])  # Drop the homogeneous coordinate
         return transformed_positions
 
+    def transform_hole_positions_to_base_average(self, hole_positions, T_camera_to_high, T_camera_to_low):
+        """
+        Calculate hole positions relative to both markers and average them.
+        """
+        hole_positions_high = []
+        hole_positions_low = []
+        hole_positions_higher_z = []
+
+        for hole in hole_positions:
+            # Convert hole to homogeneous coordinates
+            hole_homogeneous = np.array([*hole, 0, 1])
+
+            # Transform relative to the higher-ID marker
+            hole_in_high = self.T_base_to_camera @ T_camera_to_high @ (hole_homogeneous - np.array([0.18, 0.14, 0, 0]))
+            hole_positions_high.append(hole_in_high[:3])
+
+            # Transform relative to the lower-ID marker
+            hole_in_low = self.T_base_to_camera @ T_camera_to_low @ hole_homogeneous
+            hole_positions_low.append(hole_in_low[:3])
+            
+            if hole_in_high[2] > hole_in_low[2]:
+                hole_positions_higher_z.append(hole_in_high[:3])
+            else:
+                hole_positions_higher_z.append(hole_in_low[:3])
+        # # Average the positions
+        # hole_positions_avg = [(np.array(high) + np.array(low)) / 2.0 for high, low in zip(hole_positions_high, hole_positions_low)]
+
+        return hole_positions_higher_z
+        
+
     def detect_and_transform_holes(self, image_path):
         """
         Detect ArUco markers, estimate the transformation matrix, and return the transformed hole positions.
@@ -54,45 +84,64 @@ class HoleTransformer:
         # Detect markers
         corners, ids, _ = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
 
-        if ids is not None and len(corners) > 0:
-            id_min = min(ids)  # Find the marker with the lowest ID
-            rvecs_lower, tvecs_lower = None, None
+        if ids is not None and len(corners) >= 2:  # Ensure we detect at least one board
+            dirky = []
+            tfs = []
+            ids = ids.flatten()
 
-            for i, corner in enumerate(corners):
+            # Sort markers by ID
+            sorted_indices = np.argsort(ids)
+            ids = ids[sorted_indices]
+            corners = [corners[i] for i in sorted_indices]
+
+            # Pair markers sequentially (n, n+1)
+            boards = []
+            # print(ids)
+            for i in range(0, len(ids) - 1, 2):
+                if ids[i + 1] == ids[i] + 1:
+                    boards.append(((ids[i], corners[i]), (ids[i + 1], corners[i + 1])))
+
+            # Process each board
+            for board_id, (marker_low, marker_high) in enumerate(boards):
+                (id_low, corner_low), (id_high, corner_high) = marker_low, marker_high
+
                 # Estimate pose of each marker
-                rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(
-                    [corner], markerLength=self.marker_length, 
-                    cameraMatrix=self.camera_matrix, distCoeffs=self.dist_coeffs
-                )
+                rvec_low, tvec_low, _ = aruco.estimatePoseSingleMarkers([corner_low], markerLength=0.036, cameraMatrix=self.camera_matrix, distCoeffs=self.dist_coeffs)
+                rvec_high, tvec_high, _ = aruco.estimatePoseSingleMarkers([corner_high], markerLength=0.036, cameraMatrix=self.camera_matrix, distCoeffs=self.dist_coeffs)
 
-                # Draw the marker and its axes
-                cv2.aruco.drawDetectedMarkers(img, [corner], ids[i])
-                cv2.drawFrameAxes(img, self.camera_matrix, self.dist_coeffs, rvecs[0], tvecs[0], 0.05)
+                # Convert rvec to rotation matrices
+                R_low, _ = cv2.Rodrigues(rvec_low[0])
+                R_high, _ = cv2.Rodrigues(rvec_high[0])
 
-                # Check if this is the lower-ID marker
-                if ids[i] == id_min[0]:
-                    rvecs_lower, tvecs_lower = rvecs[0], tvecs[0]
+                T_camera_to_board_lower = self.get_T_camera_to_board(rvec_low, tvec_low)
+                T_camera_to_board_higher = self.get_T_camera_to_board(rvec_high, tvec_high)
 
-            if rvecs_lower is not None and tvecs_lower is not None:
-                # Convert rvec to rotation matrix
-                R_camera_to_board, _ = cv2.Rodrigues(rvecs_lower)
+                # Load hole positions
+                hole_positions = self.load_csv(f"positions_plate_0{id_low}-0{id_high}.csv")  # Adjust for board-specific CSV
 
-                # Create SE(3) for the board in the camera frame
-                T_camera_to_board = np.eye(4)
-                T_camera_to_board[:3, :3] = R_camera_to_board
-                T_camera_to_board[:3, 3] = tvecs_lower.ravel()
-
-                # Transform to the world (robot base) frame
-                T_base_to_board = self.T_base_to_camera @ T_camera_to_board
-
-                # Load hole positions and transform them
-                hole_positions = self.load_csv(f"positions_plate_0{id_min[0]}-0{id_min[0]+1}.csv")
-                transformed_holes = self.transform_hole_positions_to_base(hole_positions, T_base_to_board)
-                return transformed_holes, img, T_camera_to_board
-            else:
-                raise ValueError("Lower-ID marker not detected.")
+                # Calculate hole positions relative to both markers and their average
+                hole_positions_avg = self.transform_hole_positions_to_base_average(hole_positions, T_camera_to_board_higher,T_camera_to_board_lower)
+                dirky.append(hole_positions_avg)
+                tfs.append(T_camera_to_board_lower)
+            return dirky, img, tfs
         else:
             raise ValueError("No ArUco markers detected.")
+
+    def get_T_camera_to_board(self, rvec, tvec):
+
+        if rvec is not None and tvec is not None:
+            # Convert rvec to rotation matrix
+            R_camera_to_board, _ = cv2.Rodrigues(rvec)
+
+            # Create SE(3) for the board in the camera frame
+            T_camera_to_board = np.eye(4)
+            T_camera_to_board[:3, :3] = R_camera_to_board
+            T_camera_to_board[:3, 3] = tvec.ravel()
+
+            return T_camera_to_board
+        else:
+            raise ValueError("marker not detected.")
+        return None
 
     def visualize(self, img, hole_positions, T_camera_to_board):
         """

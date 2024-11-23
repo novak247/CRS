@@ -67,7 +67,7 @@ dist_coeffs = data['dist']
 
 # Paths to images and CSV
 csv_path = "transformations.csv"  # Replace with the actual path to your CSV
-image_folder = "/home/michalnovak/images/"  # Replace with the actual path to your images
+image_folder = "images/"  # Replace with the actual path to your images
 image_paths = [os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.endswith(".png")]
 
 # Load the CSV data
@@ -115,21 +115,21 @@ for image_path in image_paths:
         not_detected +=1
 
 
-R_gripper_to_marker, t_gripper_to_marker, R_camera_to_base, t_camera_to_base= cv2.calibrateRobotWorldHandEye(
-    camera_rotations, camera_translations,
+R_gripper_to_marker, t_gripper_to_marker, R_base_to_camera, t_base_to_camera= cv2.calibrateRobotWorldHandEye(
     robot_rotations, robot_translations,
+    camera_rotations, camera_translations,
     method=cv2.CALIB_ROBOT_WORLD_HAND_EYE_SHAH  # You can choose other methods as well
 )
 
 # Create SE(3) matrix for T_base->T_camera
-T_camera_to_base = np.eye(4)
-T_camera_to_base[:3, :3] = R_camera_to_base
-T_camera_to_base[:3, 3] = t_camera_to_base.ravel()
-np.save("T_camera_to_base.npy", T_camera_to_base)
 T_base_to_camera = np.eye(4)
-T_base_to_camera[:3, :3] = R_camera_to_base.T
-T_base_to_camera[:3, 3] = -R_camera_to_base.T @ T_camera_to_base[:3, 3]
-np.save("T_base_to_camera.npy",T_base_to_camera)
+T_base_to_camera[:3, :3] = R_base_to_camera
+T_base_to_camera[:3, 3] = t_base_to_camera.ravel()
+np.save("T_base_to_camera.npy", T_base_to_camera)
+T_camera_to_base = np.eye(4)
+T_camera_to_base[:3, :3] = R_base_to_camera.T
+T_camera_to_base[:3, 3] = -R_base_to_camera.T @ T_base_to_camera[:3, 3]
+np.save("T_camera_to_base.npy",T_base_to_camera)
 T_gripper_to_marker = np.eye(4)
 T_gripper_to_marker[:3, :3] = R_gripper_to_marker
 T_gripper_to_marker[:3, 3] = t_gripper_to_marker.ravel()
