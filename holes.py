@@ -79,7 +79,7 @@ if __name__ == "__main__":
     dist_coeffs = data['dist']
 
     # Load the image
-    image_path = "detection_images/img03.png"  # Replace with the actual image path
+    image_path = "imgs/holeImage.png"  # Replace with the actual image path
     img = cv2.imread(image_path)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
