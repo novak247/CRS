@@ -11,6 +11,8 @@ class HoleTransformer:
         self.camera_matrix = calibration_data['K']
         self.dist_coeffs = calibration_data['dist']
         self.marker_length = 0.036
+        self.T_camera_to_board_lower = None
+        self.T_camera_to_board_higher = None
 
     def load_csv(self, file_path):
         """
@@ -67,7 +69,6 @@ class HoleTransformer:
         # hole_positions_avg = [(np.array(high) + np.array(low)) / 2.0 for high, low in zip(hole_positions_high, hole_positions_low)]
 
         return hole_positions_higher_z
-        
 
     def detect_and_transform_holes(self, image_path):
         """
@@ -113,16 +114,16 @@ class HoleTransformer:
                 R_low, _ = cv2.Rodrigues(rvec_low[0])
                 R_high, _ = cv2.Rodrigues(rvec_high[0])
 
-                T_camera_to_board_lower = self.get_T_camera_to_board(rvec_low, tvec_low)
-                T_camera_to_board_higher = self.get_T_camera_to_board(rvec_high, tvec_high)
+                self.T_camera_to_board_lower = self.get_T_camera_to_board(rvec_low, tvec_low)
+                self.T_camera_to_board_higher = self.get_T_camera_to_board(rvec_high, tvec_high)
 
                 # Load hole positions
                 hole_positions = self.load_csv(f"positions_plate_0{id_low}-0{id_high}.csv")  # Adjust for board-specific CSV
 
                 # Calculate hole positions relative to both markers and their average
-                hole_positions_avg = self.transform_hole_positions_to_base_average(hole_positions, T_camera_to_board_higher,T_camera_to_board_lower)
+                hole_positions_avg = self.transform_hole_positions_to_base_average(hole_positions, self.T_camera_to_board_higher, self.T_camera_to_board_lower)
                 dirky.append(hole_positions_avg)
-                tfs.append(T_camera_to_board_lower)
+                tfs.append(self.T_camera_to_board_lower)
             return dirky, img, tfs
         else:
             raise ValueError("No ArUco markers detected.")
@@ -201,3 +202,43 @@ class HoleTransformer:
         cv2.arrowedLine(image, origin, y_axis, (0, 255, 0), 2, tipLength=0.2)
         cv2.putText(image, "X", x_axis, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
         cv2.putText(image, "Y", y_axis, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+    def refine_hole_positions(self, hole_positions_list):
+        """
+        Refine hole positions using multiple transformations and corresponding positions.
+        
+        Args:
+            hole_positions_list (list of np.ndarray): List of hole position arrays (one array per image).
+            transforms_list (list of np.ndarray): List of T_camera_to_board transformations (one per image).
+
+        Returns:
+            refined_hole_positions (np.ndarray): Refined hole positions with improved z-components.
+        """
+
+        num_holes = hole_positions_list.shape[1]  
+        num_images = hole_positions_list.shape[0]
+
+        # Collect z-values for each hole across all images
+        z_values_per_hole = [[] for _ in range(num_holes)]
+        refined_hole_positions = []
+
+        for i in range(num_images):
+            hole_positions = hole_positions_list[i]
+
+        for j, hole in enumerate(hole_positions): 
+            hole_in_camera = hole
+            # Collect the z-component
+            z_values_per_hole[j].append(hole_in_camera[2])
+
+        # Process each hole's z-values
+        for j in range(num_holes):
+            z_values = np.array(z_values_per_hole[j])
+
+            # Refine the z-component using robust statistics (e.g., median)
+            refined_z = np.median(z_values)
+
+            # Use the first image's x, y as reference (assuming x, y are consistent across images)
+            refined_hole = np.array([hole_positions_list[0][j][0], hole_positions_list[0][j][1], refined_z])
+            refined_hole_positions.append(refined_hole)
+
+        return np.array(refined_hole_positions)
