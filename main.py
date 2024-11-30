@@ -9,17 +9,17 @@ import time
 from detect_board import HoleTransformer
 import os
 
-def move_robot_to_xyz(robot, qnow, xyz_offset):
+def move_robot_to_xyz(robot, qnow, xyz_offset, flange_rot = False, theta = 0):
   current_pose = robot.fk(qnow)
   current_pose[:3, 3] += xyz_offset
   ik_sols = robot.ik(current_pose)
-  if len(ik_sols) == 0:
-    print("No IK solution found for the given offset.")
-    return False
   closest_solution = min(ik_sols, key=lambda q: np.linalg.norm(q - qnow))
+  if flange_rot:
+    closest_solution = np.append(closest_solution[:5], theta + closest_solution[0])
   robot.move_to_q(closest_solution)
   robot.wait_for_motion_stop()
   return True
+
 
 def rotate_joint(robot, q_current, joint_5_angle, joint_6_angle):
   """Rotates joint 5 and joint 6 to specified angles."""
@@ -120,6 +120,14 @@ def decompose_rotation(R):
 
     return theta_z, axis, angle
 
+def normalize_angle(angle):
+  angle_normalized = (angle + np.pi) % (2 * np.pi) - np.pi
+  if angle_normalized > np.pi/2:
+    angle_normalized = -np.pi + angle_normalized
+  elif angle < -np.pi/2:
+    angle_normalized = np.pi + angle_normalized
+  return angle_normalized
+
 def main():
   camera, robot = initialize_robot_and_camera()
   get_board_position_images(robot, camera) 
@@ -129,41 +137,52 @@ def main():
   img_path = "board_imgs"
   hole_positions = get_hole_positions(transformer, img_path)
 
-  R = (transformer.T_base_to_camera @ transformer.T_camera_to_board_lower)[:3,:3]
-  print("Rodrigez: ", extract_axis_angle(R))
-  print("decomposed rotation: ", decompose_rotation(R))
+  R1 = (transformer.T_base_to_camera @ transformer.T_camera_to_board_lower[0])[:3,:3]
+  R2 = (transformer.T_base_to_camera @ transformer.T_camera_to_board_lower[1])[:3,:3]
+  print("decomposed rotation R1: ", normalize_angle(decompose_rotation(R1)[0])*180/np.pi)
+  print("decomposed rotation R2: ", normalize_angle(decompose_rotation(R2)[0])*180/np.pi)
+  theta1 = normalize_angle(decompose_rotation(R1)[0])
+  theta2 = normalize_angle(decompose_rotation(R2)[0])
   transformed_holes = []
   transformed_holes.append(transformer.refine_hole_positions(np.array([hole_positions[i][0] for i in range(len(hole_positions))])))
   transformed_holes.append(transformer.refine_hole_positions(np.array([hole_positions[i][1] for i in range(len(hole_positions))])))
 
   pairs = make_pairs(transformed_holes)
+  # print(pairs)
+  
   homePosition = robot.get_q()
   for pair in pairs:
     switch = 1
-    for pos in pair:
+    for pos in reversed(pair):
       if switch == 1:
-        offset = pos-robot.fk(homePosition)[:3,3]+np.array([0,-0.01,0.10])
+        offset = pos-robot.fk(homePosition)[:3,3]+np.array([0,0.0,0.10])
         print("Position:", pos)
         move_robot_to_xyz(robot, homePosition, offset)
-
         move_robot_to_xyz(robot, homePosition, offset-np.array([0, 0, 0.07]))
+        robot.move_to_q(np.append(robot.get_q()[:5], -theta2))
+        robot.wait_for_motion_stop()
         time.sleep(1)
         robot.gripper.control_position(-1000 * switch)
         time.sleep(2)
         switch *= -1
         move_robot_to_xyz(robot, homePosition, offset)
+        robot.move_to_q(np.append(robot.get_q()[:5], 0))
+        robot.wait_for_motion_stop()
         move_robot_to_xyz(robot, homePosition, np.array([0, 0, 0]))
       else:
-        offset = pos-robot.fk(homePosition)[:3,3]+np.array([0.01,0,0.10])
+        offset = pos-robot.fk(homePosition)[:3,3]+np.array([0.0,0,0.10])
         print("Position:", pos)
         move_robot_to_xyz(robot, homePosition, offset)
-
-        move_robot_to_xyz(robot, homePosition, offset-np.array([0, 0, 0.07]))
+        move_robot_to_xyz(robot, homePosition, offset-np.array([0, 0, 0.05]), True, -theta1)
+        # robot.move_to_q(np.append(robot.get_q()[:5], -theta1))
+        # robot.wait_for_motion_stop()
         time.sleep(1)
         robot.gripper.control_position(-1000 * switch)
         time.sleep(2)
         switch *= -1
         move_robot_to_xyz(robot, homePosition, offset)
+        robot.move_to_q(np.append(robot.get_q()[:5], 0))
+        robot.wait_for_motion_stop()
         move_robot_to_xyz(robot, homePosition, np.array([0, 0, 0]))
   
   robot.soft_home()

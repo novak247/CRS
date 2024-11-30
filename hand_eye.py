@@ -88,10 +88,23 @@ for image_path in image_paths:
 
     if ids is not None and len(corners) > 0:
         largest_marker_index = np.argmax([cv2.contourArea(corner) for corner in corners])
+        refined_corners_list = []
+        for i in range(len(corners)):
+            refined_corners = cv2.cornerSubPix(
+                gray,
+                corners[i],
+                winSize=(5,5),
+                zeroZone=(-1,-1),
+                criteria=(cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.001),
+            )
+            refined_corners_list.append(refined_corners)
+
+        corners = refined_corners_list
+
         rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers([corners[largest_marker_index]], markerLength=0.06, cameraMatrix=camera_matrix, distCoeffs=dist_coeffs)
 
         rotation_matrix, _ = cv2.Rodrigues(rvecs[0])
-        
+        refined_corners_list = []
 
         try:
             

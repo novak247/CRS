@@ -11,8 +11,8 @@ class HoleTransformer:
         self.camera_matrix = calibration_data['K']
         self.dist_coeffs = calibration_data['dist']
         self.marker_length = 0.036
-        self.T_camera_to_board_lower = None
-        self.T_camera_to_board_higher = None
+        self.T_camera_to_board_lower = []
+        self.T_camera_to_board_higher = []
 
     def load_csv(self, file_path):
         """
@@ -41,10 +41,11 @@ class HoleTransformer:
             transformed_positions.append(hole_in_base[:3])  # Drop the homogeneous coordinate
         return transformed_positions
 
-    def transform_hole_positions_to_base_average(self, hole_positions, T_camera_to_high, T_camera_to_low):
+    def transform_hole_positions_to_base_average(self, hole_positions, T_camera_to_high, T_camera_to_low, board_id):
         """
         Calculate hole positions relative to both markers and average them.
         """
+        T_camera_to_high, T_camera_to_low = T_camera_to_high[board_id], T_camera_to_low[board_id]
         hole_positions_high = []
         hole_positions_low = []
         hole_positions_higher_z = []
@@ -77,13 +78,28 @@ class HoleTransformer:
         # Load the image
         img = cv2.imread(image_path)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
+        # h, w = gray.shape[:2]
+        # new_camera_matrix, _ = cv2.getOptimalNewCameraMatrix(self.camera_matrix, self.dist_coeffs, (w, h), 1, (w, h))
+        # gray = cv2.undistort(gray, self.camera_matrix, self.dist_coeffs, None, new_camera_matrix)
         # Initialize the ArUco dictionary
         aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
         parameters = aruco.DetectorParameters()
 
         # Detect markers
         corners, ids, _ = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
+        refined_corners_list = []
+
+        for i in range(len(corners)):
+            refined_corners = cv2.cornerSubPix(
+                gray,
+                corners[i],
+                winSize=(5,5),
+                zeroZone=(-1,-1),
+                criteria=(cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.001),
+            )
+            refined_corners_list.append(refined_corners)
+
+        corners = refined_corners_list
 
         if ids is not None and len(corners) >= 2:  # Ensure we detect at least one board
             dirky = []
@@ -114,14 +130,14 @@ class HoleTransformer:
                 R_low, _ = cv2.Rodrigues(rvec_low[0])
                 R_high, _ = cv2.Rodrigues(rvec_high[0])
 
-                self.T_camera_to_board_lower = self.get_T_camera_to_board(rvec_low, tvec_low)
-                self.T_camera_to_board_higher = self.get_T_camera_to_board(rvec_high, tvec_high)
+                self.T_camera_to_board_lower.append(self.get_T_camera_to_board(rvec_low, tvec_low)) 
+                self.T_camera_to_board_higher.append(self.get_T_camera_to_board(rvec_high, tvec_high))
 
                 # Load hole positions
                 hole_positions = self.load_csv(f"positions_plate_0{id_low}-0{id_high}.csv")  # Adjust for board-specific CSV
 
                 # Calculate hole positions relative to both markers and their average
-                hole_positions_avg = self.transform_hole_positions_to_base_average(hole_positions, self.T_camera_to_board_higher, self.T_camera_to_board_lower)
+                hole_positions_avg = self.transform_hole_positions_to_base_average(hole_positions, self.T_camera_to_board_higher, self.T_camera_to_board_lower, board_id)
                 dirky.append(hole_positions_avg)
                 tfs.append(self.T_camera_to_board_lower)
             return dirky, img, tfs
@@ -233,7 +249,7 @@ class HoleTransformer:
         # Process each hole's z-values
         for j in range(num_holes):
             z_values = np.array(z_values_per_hole[j])
-
+            print(np.min(z_values), np.max(z_values))
             # Refine the z-component using robust statistics (e.g., median)
             refined_z = np.median(z_values)
 
