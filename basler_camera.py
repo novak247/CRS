@@ -56,7 +56,7 @@ class BaslerCamera:
         self.gain = 0.0
         self.frame_rate = 0
         self.exposure_time = 0.0
-        self.grab_timeout = 1000
+        self.grab_timeout = 10000
         self.config_attrs = [
             "ip_address",
             "grab_timeout",

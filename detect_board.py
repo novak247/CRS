@@ -8,8 +8,11 @@ class HoleTransformer:
         # Load transformation matrix and camera parameters
         self.T_base_to_camera = np.load(T_base_to_camera_path)
         calibration_data = np.load(calibration_data_path)
-        self.camera_matrix = calibration_data['K']
-        self.dist_coeffs = calibration_data['dist']
+        # self.camera_matrix = calibration_data['K']
+        self.camera_matrix = np.load("cameraMatrix.npy")
+        # self.camera_matrix = np.load("K_new.npy")
+        # self.dist_coeffs = calibration_data['dist']
+        self.dist_coeffs = np.load("distCoeffs.npy")
         self.marker_length = 0.036
         self.T_camera_to_board_lower = []
         self.T_camera_to_board_higher = []
@@ -125,11 +128,11 @@ class HoleTransformer:
                 # Estimate pose of each marker
                 rvec_low, tvec_low, _ = aruco.estimatePoseSingleMarkers([corner_low], markerLength=0.036, cameraMatrix=self.camera_matrix, distCoeffs=self.dist_coeffs)
                 rvec_high, tvec_high, _ = aruco.estimatePoseSingleMarkers([corner_high], markerLength=0.036, cameraMatrix=self.camera_matrix, distCoeffs=self.dist_coeffs)
-
+                # print(tvec_low, tvec_high)
                 # Convert rvec to rotation matrices
                 R_low, _ = cv2.Rodrigues(rvec_low[0])
                 R_high, _ = cv2.Rodrigues(rvec_high[0])
-
+                print(rvec_low)
                 self.T_camera_to_board_lower.append(self.get_T_camera_to_board(rvec_low, tvec_low)) 
                 self.T_camera_to_board_higher.append(self.get_T_camera_to_board(rvec_high, tvec_high))
 
