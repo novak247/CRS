@@ -92,6 +92,7 @@ for image_path in image_paths:
 
     aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_APRILTAG_36h11)
     parameters = aruco.DetectorParameters()
+    parameters.cornerRefinementMethod = aruco.CORNER_REFINE_APRILTAG
     detector = aruco.ArucoDetector(aruco_dict, parameters)
     corners, ids, _ = detector.detectMarkers(gray)
 

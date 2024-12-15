@@ -53,6 +53,8 @@ def match_csv_row(filename, csv_data):
 # Camera parameters (replace with actual values)
 data = np.load('calibration_data.npz')
 camera_matrix = np.load("cameraMatrix.npy")
+camera_matrix[0,2] = 960
+camera_matrix[1,2] = 600
 # camera_matrix = data["K"]
 # dist_coeffs = data['dist']
 dist_coeffs = np.load("distCoeffs.npy")
@@ -77,6 +79,7 @@ for image_path in image_paths:
 
     aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
     parameters = aruco.DetectorParameters()
+    parameters.cornerRefinementMethod = aruco.CORNER_REFINE_APRILTAG
     corners, ids, _ = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
 
     if ids is not None and len(corners) > 0:

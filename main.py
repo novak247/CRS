@@ -130,7 +130,7 @@ def main():
   # camera, robot = initialize_robot_and_camera()
   # get_board_position_images(robot, camera) 
 
-  transformer = HoleTransformer("T_base_to_camera_optimized.npy", "calibration_data.npz")
+  transformer = HoleTransformer("T_base_to_camera_new.npy", "calibration_data.npz")
 
   img_path = "board_imgs"
   hole_positions = get_hole_positions(transformer, img_path)
@@ -142,11 +142,14 @@ def main():
   theta1 = normalize_angle(decompose_rotation(R1)[0])
   theta2 = normalize_angle(decompose_rotation(R2)[0])
   transformed_holes = []
+  print(np.array([hole_positions[i][0] for i in range(len(hole_positions))]))
   transformed_holes.append(transformer.refine_hole_positions(np.array([hole_positions[i][0] for i in range(len(hole_positions))])))
   transformed_holes.append(transformer.refine_hole_positions(np.array([hole_positions[i][1] for i in range(len(hole_positions))])))
 
   pairs = make_pairs(transformed_holes)
-  print(pairs)
+  for pair in enumerate(pairs):
+
+    print(f"Pair {pair[0]+1}: ", *pair[1])
   
   # homePosition = robot.get_q()
   # for pair in pairs:
@@ -183,7 +186,7 @@ def main():
   #       robot.wait_for_motion_stop()
   #       move_robot_to_xyz(robot, homePosition, np.array([0, 0, 0]))
   
-  robot.soft_home()
+  # robot.soft_home()
 
 if __name__ == "__main__":
     main()
