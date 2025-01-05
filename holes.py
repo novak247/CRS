@@ -48,7 +48,7 @@ def draw_hole_positions(image, hole_positions_camera, camera_matrix, dist_coeffs
 # Main script
 if __name__ == "__main__":
     # Load the transformation matrix (SE(3)) and camera parameters
-    T_base_to_camera = np.load("T_base_to_camera.npy")  # Replace with your file path
+    T_base_to_camera = np.load("T_base_to_camera_new.npy")  # Replace with your file path
     data = np.load('calibration_data.npz')
     camera_matrix = data['K']
     dist_coeffs = data['dist']
