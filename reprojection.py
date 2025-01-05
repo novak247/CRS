@@ -52,8 +52,9 @@ def match_csv_row(filename, csv_data):
 
 # Camera parameters (replace with actual values)
 data = np.load('calibration_data.npz')
-camera_matrix = data['K']
-dist_coeffs = data['dist']
+# camera_matrix = data['K']
+camera_matrix = np.load("cameraMatrix.npy")
+dist_coeffs = np.load("distCoeffs.npy")
 
 # Paths to images and CSV
 csv_path = "new_transformations.csv"  # Replace with the actual path to your CSV
@@ -75,7 +76,7 @@ image_points_list = []
 object_points_list = []
 
 # Define the marker model points (3D points in marker coordinate system)
-markerLength = 0.04  # Marker size in meters
+markerLength = 0.1  # Marker size in meters
 half_size = markerLength / 2.0
 marker_model_points = np.array([
     [-half_size,  half_size, 0],
@@ -89,8 +90,9 @@ for image_path in image_paths:
     img = cv2.imread(image_path)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_50)
+    aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_APRILTAG_36h11)
     parameters = aruco.DetectorParameters()
+    parameters.cornerRefinementMethod = aruco.CORNER_REFINE_APRILTAG
     detector = aruco.ArucoDetector(aruco_dict, parameters)
     corners, ids, _ = detector.detectMarkers(gray)
 
@@ -122,10 +124,9 @@ def optimize_T_base_to_camera(T_base_to_camera, T_base_to_gripper_list, T_grippe
 
     def reprojection_error(params):
         # Construct the optimized T_base_to_camera
-        rvec = params[:3]
-        tvec = params[3:6]
+        tvec = params[:3]
         T_base_to_camera_opt = np.eye(4)
-        T_base_to_camera_opt[:3, :3] = cv2.Rodrigues(rvec)[0]
+        T_base_to_camera_opt[:3, :3] = T_base_to_camera[:3, :3]
         T_base_to_camera_opt[:3, 3] = tvec
 
         error = []
@@ -154,19 +155,17 @@ def optimize_T_base_to_camera(T_base_to_camera, T_base_to_gripper_list, T_grippe
         return np.concatenate(error)
 
     # Initial parameters (rvec and tvec from initial T_base_to_camera)
-    R_init = T_base_to_camera[:3, :3]
+    R_base_to_camera = T_base_to_camera[:3, :3]
     t_init = T_base_to_camera[:3, 3]
-    rvec_init, _ = cv2.Rodrigues(R_init)
-    initial_params = np.hstack([rvec_init.ravel(), t_init])
+    initial_params = t_init
 
     # Optimize using Levenberg-Marquardt
     result = least_squares(reprojection_error, initial_params, method="lm")
 
     # Return optimized T_base_to_camera
-    optimized_R, _ = cv2.Rodrigues(result.x[:3])
     optimized_T = np.eye(4)
-    optimized_T[:3, :3] = optimized_R
-    optimized_T[:3, 3] = result.x[3:6]
+    optimized_T[:3, :3] = R_base_to_camera
+    optimized_T[:3, 3] = result.x[:3]
     return optimized_T
 
 # Optimize T_base_to_camera

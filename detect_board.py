@@ -1,6 +1,8 @@
 import cv2
 import cv2.aruco as aruco
 import numpy as np
+from scipy.optimize import minimize
+from scipy.spatial.transform import Rotation as R
 
 
 class HoleTransformer:
@@ -8,9 +10,24 @@ class HoleTransformer:
         # Load transformation matrix and camera parameters
         self.T_base_to_camera = np.load(T_base_to_camera_path)
         calibration_data = np.load(calibration_data_path)
-        self.camera_matrix = calibration_data['K']
-        self.dist_coeffs = calibration_data['dist']
+        # self.camera_matrix = calibration_data['K']
+        self.camera_matrix = np.load("cameraMatrix.npy")
+        # self.T_base_to_camera[1,3] = 0
+        # self.camera_matrix[0,2] = 960
+        # self.camera_matrix[1,2] = 600
+        # self.camera_matrix = np.load("K_new.npy")
+        # self.dist_coeffs = calibration_data['dist']
+        self.dist_coeffs = np.load("distCoeffs.npy")
         self.marker_length = 0.036
+        self.T_base_to_camera[0,0] = 0
+        self.T_base_to_camera[0,1] = 1
+        self.T_base_to_camera[0,2] = 0
+        self.T_base_to_camera[1,0] = 1
+        self.T_base_to_camera[1,1] = 0
+        self.T_base_to_camera[1,2] = 0
+        self.T_base_to_camera[2,0] = 0
+        self.T_base_to_camera[2,1] = 0
+        self.T_base_to_camera[2,2] = -1
         self.T_camera_to_board_lower = []
         self.T_camera_to_board_higher = []
 
@@ -29,29 +46,44 @@ class HoleTransformer:
         hole_positions_m = [[x / 1000.0, y / 1000.0] for x, y in hole_positions_mm]
         return hole_positions_m
 
-    def transform_hole_positions_to_base(self, hole_positions, T_base_to_board):
-        """
-        Transform hole positions from the board's local frame to the robot's base frame.
-        """
-        transformed_positions = []
-        for hole in hole_positions:
-            # Convert to homogeneous coordinates
-            hole_homogeneous = np.array([*hole, 0, 1])  # Assuming z = 0 in the board frame
-            hole_in_base = T_base_to_board @ hole_homogeneous
-            transformed_positions.append(hole_in_base[:3])  # Drop the homogeneous coordinate
-        return transformed_positions
 
-    def transform_hole_positions_to_base_average(self, hole_positions, T_camera_to_high, T_camera_to_low, board_id):
+    def transform_hole_positions_to_base_average(self, hole_positions, T_camera_to_high, T_camera_to_low):
         """
         Calculate hole positions relative to both markers and average them.
         """
-        T_camera_to_high, T_camera_to_low = T_camera_to_high[board_id], T_camera_to_low[board_id]
         hole_positions_high = []
         hole_positions_low = []
         hole_positions_higher_z = []
+        
+        rotation_matrix = T_camera_to_high[:3, :3]
+        r = R.from_matrix(rotation_matrix)
+        euler_angles = r.as_euler('xyz')
+        print(np.degrees(euler_angles))
+        # Optimize T_camera_to_high
+        # tvec_high = T_camera_to_high[:3, 3]
+        # theta_z_high, axis_high = self.optimize_rotation_and_axis(
+        #     tvec_high, hole_positions, ground_truth, self.T_base_to_camera
+        # )
+        if abs(euler_angles[0]) > abs(euler_angles[1]):
+            axis = 'x'
+        else:
+            axis = 'y'
+        Rot = self.construct_rotation_matrix(euler_angles[2], axis)
+        T_camera_to_high[:3, :3] = Rot
+        
 
+        rotation_matrix = T_camera_to_low[:3, :3]
+        r = R.from_matrix(rotation_matrix)
+        euler_angles = r.as_euler('xyz')
+        if abs(euler_angles[0]) > abs(euler_angles[1]):
+            axis = 'x'
+        else:
+            axis = 'y'
+        Rot = self.construct_rotation_matrix(euler_angles[2], axis)
+        T_camera_to_low[:3, :3] = Rot
+
+        # Recompute hole positions with optimized transformations
         for hole in hole_positions:
-            # Convert hole to homogeneous coordinates
             hole_homogeneous = np.array([*hole, 0, 1])
 
             # Transform relative to the higher-ID marker
@@ -61,13 +93,12 @@ class HoleTransformer:
             # Transform relative to the lower-ID marker
             hole_in_low = self.T_base_to_camera @ T_camera_to_low @ hole_homogeneous
             hole_positions_low.append(hole_in_low[:3])
-            
+
+            # Choose the higher Z position
             if hole_in_high[2] > hole_in_low[2]:
                 hole_positions_higher_z.append(hole_in_high[:3])
             else:
                 hole_positions_higher_z.append(hole_in_low[:3])
-        # # Average the positions
-        # hole_positions_avg = [(np.array(high) + np.array(low)) / 2.0 for high, low in zip(hole_positions_high, hole_positions_low)]
 
         return hole_positions_higher_z
 
@@ -84,6 +115,7 @@ class HoleTransformer:
         # Initialize the ArUco dictionary
         aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
         parameters = aruco.DetectorParameters()
+        parameters.cornerRefinementMethod = aruco.CORNER_REFINE_SUBPIX
 
         # Detect markers
         corners, ids, _ = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
@@ -125,19 +157,16 @@ class HoleTransformer:
                 # Estimate pose of each marker
                 rvec_low, tvec_low, _ = aruco.estimatePoseSingleMarkers([corner_low], markerLength=0.036, cameraMatrix=self.camera_matrix, distCoeffs=self.dist_coeffs)
                 rvec_high, tvec_high, _ = aruco.estimatePoseSingleMarkers([corner_high], markerLength=0.036, cameraMatrix=self.camera_matrix, distCoeffs=self.dist_coeffs)
-
-                # Convert rvec to rotation matrices
-                R_low, _ = cv2.Rodrigues(rvec_low[0])
-                R_high, _ = cv2.Rodrigues(rvec_high[0])
-
-                self.T_camera_to_board_lower.append(self.get_T_camera_to_board(rvec_low, tvec_low)) 
-                self.T_camera_to_board_higher.append(self.get_T_camera_to_board(rvec_high, tvec_high))
+                T_camera_to_board_lower = self.get_T_camera_to_board(rvec_low, tvec_low)
+                T_camera_to_board_higher = self.get_T_camera_to_board(rvec_high, tvec_high)
+                self.T_camera_to_board_lower.append(T_camera_to_board_lower) 
+                self.T_camera_to_board_higher.append(T_camera_to_board_higher)
 
                 # Load hole positions
                 hole_positions = self.load_csv(f"positions_plate_0{id_low}-0{id_high}.csv")  # Adjust for board-specific CSV
 
                 # Calculate hole positions relative to both markers and their average
-                hole_positions_avg = self.transform_hole_positions_to_base_average(hole_positions, self.T_camera_to_board_higher, self.T_camera_to_board_lower, board_id)
+                hole_positions_avg = self.transform_hole_positions_to_base_average(hole_positions, T_camera_to_board_higher, T_camera_to_board_lower)
                 dirky.append(hole_positions_avg)
                 tfs.append(self.T_camera_to_board_lower)
             return dirky, img, tfs
@@ -149,12 +178,10 @@ class HoleTransformer:
         if rvec is not None and tvec is not None:
             # Convert rvec to rotation matrix
             R_camera_to_board, _ = cv2.Rodrigues(rvec)
-
             # Create SE(3) for the board in the camera frame
             T_camera_to_board = np.eye(4)
             T_camera_to_board[:3, :3] = R_camera_to_board
             T_camera_to_board[:3, 3] = tvec.ravel()
-
             return T_camera_to_board
         else:
             raise ValueError("marker not detected.")
@@ -233,18 +260,17 @@ class HoleTransformer:
 
         num_holes = hole_positions_list.shape[1]  
         num_images = hole_positions_list.shape[0]
-
+        print(num_holes, num_images)
         # Collect z-values for each hole across all images
         z_values_per_hole = [[] for _ in range(num_holes)]
         refined_hole_positions = []
 
         for i in range(num_images):
             hole_positions = hole_positions_list[i]
-
-        for j, hole in enumerate(hole_positions): 
-            hole_in_camera = hole
-            # Collect the z-component
-            z_values_per_hole[j].append(hole_in_camera[2])
+            for j, hole in enumerate(hole_positions): 
+                hole_in_camera = hole
+                # Collect the z-component
+                z_values_per_hole[j].append(hole_in_camera[2])
 
         # Process each hole's z-values
         for j in range(num_holes):
@@ -258,3 +284,75 @@ class HoleTransformer:
             refined_hole_positions.append(refined_hole)
 
         return np.array(refined_hole_positions)
+
+
+
+
+    def construct_rotation_matrix(self, theta_z, axis):
+        """Construct a rotation matrix with a rotation about z-axis by theta_z and a fixed 180-degree rotation."""
+        # Rotation around z-axis
+        theta_z = np.squeeze(theta_z)
+        R_z = np.array([
+            [np.cos(theta_z), -np.sin(theta_z), 0],
+            [np.sin(theta_z),  np.cos(theta_z), 0],
+            [0,                0,               1]
+        ])
+        
+        # Fixed 180-degree rotation around x or y axis
+        if axis == 'x':
+            R_fixed = np.array([
+                [1, 0,  0],
+                [0, -1, 0],
+                [0, 0,  -1]
+            ])
+        elif axis == 'y':
+            R_fixed = np.array([
+                [-1, 0, 0],
+                [0, 1, 0],
+                [0, 0, -1]
+            ])
+        else:
+            raise ValueError("Invalid axis, must be 'x' or 'y'")
+        
+        # Combined rotation
+        return R_z @ R_fixed
+
+    def residual_error(self, theta_z, tvec, hole_positions, ground_truth, T_base_to_camera, axis):
+        """Minimize residuals by optimizing the z-axis rotation."""
+        # Construct the rotation matrix
+        R = self.construct_rotation_matrix(theta_z, axis)
+        T_camera_to_marker = np.eye(4)
+        T_camera_to_marker[:3, :3] = R
+        T_camera_to_marker[:3, 3] = tvec
+
+        errors = []
+        for hole, gt in zip(hole_positions, ground_truth):
+            # Transform the hole position
+            hole_homogeneous = np.array([*hole, 0, 1])
+            transformed_hole = T_base_to_camera @ T_camera_to_marker @ hole_homogeneous
+            # Compute the residual
+            error = np.linalg.norm(transformed_hole[:3] - gt)
+            errors.append(error)
+
+        return np.mean(errors)
+
+    def optimize_rotation_and_axis(self, tvec, hole_positions, ground_truth, T_base_to_camera):
+        """Optimize rotation around z-axis and determine whether x or y fixed rotation minimizes residuals."""
+        results = {}
+        for axis in ['x', 'y']:
+            result = minimize(
+                self.residual_error,
+                x0=0,  # Initial guess for theta_z
+                args=(tvec, hole_positions, ground_truth, T_base_to_camera, axis),
+                method='L-BFGS-B'
+            )
+            results[axis] = result
+
+        # Choose the axis with the minimum residual
+        best_axis = min(results, key=lambda axis: results[axis].fun)
+        best_result = results[best_axis]
+
+        # Return optimized theta_z and the best axis
+        return best_result.x[0], best_axis
+
+    
