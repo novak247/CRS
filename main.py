@@ -51,6 +51,15 @@ def get_hole_positions(transformer, img_dir):
     hole_positions.append(transformed_holes)
   return hole_positions
 
+# def get_transformations(transformer, img_dir):
+#   tfs = []
+#   files = os.listdir(img_dir)
+#   imgs = [os.path.join(img_dir, f) for f in files if f.lower().endswith(".png")]
+#   for img in imgs:
+#     _, _, tf = transformer.detect_and_transform_holes(image_path=img)
+#     tfs.append(transformed_holes)
+#   return tfs
+
 def initialize_robot_and_camera():
   camera: BaslerCamera = BaslerCamera()
   camera.connect_by_name("camera-crs97")
@@ -119,13 +128,18 @@ def decompose_rotation(R):
 
     return theta_z, axis, angle
 
-def normalize_angle(angle):
-  angle_normalized = (angle + np.pi) % (2 * np.pi) - np.pi
-  if angle_normalized > np.pi/2:
-    angle_normalized = -np.pi + angle_normalized
-  elif angle < -np.pi/2:
-    angle_normalized = np.pi + angle_normalized
-  return angle_normalized
+def normalize_angle(angle_radians):
+    # Convert the angle to the range [0, 2*pi)
+    angle_radians = angle_radians % (2 * math.pi)
+    
+    # Convert the angle to degrees
+    angle_degrees = math.degrees(angle_radians)
+    
+    # Normalize to the interval [0, 90]
+    normalized_angle = angle_degrees % 90
+    if normalized_angle > 45:
+      normalized_angle = 90 - normalized_angle
+    return np.radians(normalized_angle)
 
 def main():
   camera, robot = initialize_robot_and_camera()
@@ -135,7 +149,7 @@ def main():
 
   img_path = "board_imgs"
   hole_positions = get_hole_positions(transformer, img_path)
-
+  # tfs = get_transformations(transformer, img_path)
   R1 = (transformer.T_base_to_camera @ transformer.T_camera_to_board_lower[0])[:3,:3]
   R2 = (transformer.T_base_to_camera @ transformer.T_camera_to_board_lower[1])[:3,:3]
   # print("decomposed rotation R1: ", normalize_angle(decompose_rotation(R1)[0])*180/np.pi)
@@ -143,6 +157,7 @@ def main():
   theta1 = normalize_angle(decompose_rotation(R1)[0])
   theta2 = normalize_angle(decompose_rotation(R2)[0])
   transformed_holes = []
+  print("THETAS: ", np.degrees(theta1), np.degrees(theta2))
   print(np.array([hole_positions[i][0] for i in range(len(hole_positions))]))
   transformed_holes.append(transformer.refine_hole_positions(np.array([hole_positions[i][0] for i in range(len(hole_positions))])))
   transformed_holes.append(transformer.refine_hole_positions(np.array([hole_positions[i][1] for i in range(len(hole_positions))])))
@@ -155,14 +170,15 @@ def main():
   homePosition = robot.get_q()
   for pair in pairs:
     switch = 1
-    for pos in reversed(pair):
+    for pos in pair:
       if switch == 1:
         offset = pos-robot.fk(homePosition)[:3,3]+np.array([-0.03,0.0,0.10])
         if pos[1] < 0:
           offset += np.array([0.0, 0.0075, 0.0])
-        print("Position:", pos)
+        print("Position:", pos, " Angle: ", -theta2)
         move_robot_to_xyz(robot, homePosition, offset)
         move_robot_to_xyz(robot, homePosition, offset-np.array([0, 0, 0.05]))
+        robot.move_to_q(robot.get_q() + np.array([0,0,0,0,0,theta2]))
         robot.wait_for_motion_stop()
         time.sleep(1)
         robot.gripper.control_position(-1000 * switch)
@@ -175,11 +191,11 @@ def main():
         offset = pos-robot.fk(homePosition)[:3,3]+np.array([-0.03,0,0.10])
         if pos[1] < 0:
           offset += np.array([0.0, 0.0075, 0.0])
-        print("Position:", pos)
+        print("Position:", pos, " Angle: ", -theta1)
         move_robot_to_xyz(robot, homePosition, offset)
         move_robot_to_xyz(robot, homePosition, offset-np.array([0, 0, 0.04]))
-        # robot.move_to_q(np.append(robot.get_q()[:5], -theta1))
-        # robot.wait_for_motion_stop()
+        robot.move_to_q(robot.get_q() + np.array([0,0,0,0,0,theta1]))
+        robot.wait_for_motion_stop()
         time.sleep(1)
         robot.gripper.control_position(-1000 * switch)
         time.sleep(2)

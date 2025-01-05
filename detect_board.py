@@ -263,6 +263,8 @@ class HoleTransformer:
         print(num_holes, num_images)
         # Collect z-values for each hole across all images
         z_values_per_hole = [[] for _ in range(num_holes)]
+        x_values_per_hole = [[] for _ in range(num_holes)]
+        y_values_per_hole = [[] for _ in range(num_holes)]
         refined_hole_positions = []
 
         for i in range(num_images):
@@ -271,16 +273,25 @@ class HoleTransformer:
                 hole_in_camera = hole
                 # Collect the z-component
                 z_values_per_hole[j].append(hole_in_camera[2])
+                x_values_per_hole[j].append(hole_in_camera[0])
+                y_values_per_hole[j].append(hole_in_camera[1])
 
         # Process each hole's z-values
         for j in range(num_holes):
             z_values = np.array(z_values_per_hole[j])
+            x_values = np.array(x_values_per_hole[j])
+            y_values = np.array(y_values_per_hole[j])
             print(np.min(z_values), np.max(z_values))
+            print(np.min(x_values), np.max(x_values))
+            print(np.min(y_values), np.max(y_values))
             # Refine the z-component using robust statistics (e.g., median)
             refined_z = np.median(z_values)
+            refined_x = np.median(x_values)
+            refined_y = np.median(y_values)
 
             # Use the first image's x, y as reference (assuming x, y are consistent across images)
-            refined_hole = np.array([hole_positions_list[0][j][0], hole_positions_list[0][j][1], refined_z])
+            # refined_hole = np.array([hole_positions_list[0][j][0], hole_positions_list[0][j][1], refined_z])
+            refined_hole = np.array([refined_x, refined_y, refined_z])
             refined_hole_positions.append(refined_hole)
 
         return np.array(refined_hole_positions)
