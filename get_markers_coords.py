@@ -9,8 +9,9 @@ camera_matrix = data['K']
 dist_coeffs = data['dist']
 
 # Load the image
-image_path = "detection_images/img04.png"  # Replace with the actual image path
+image_path = "board_imgs/hImage5.png"  # Replace with the actual image path
 img = cv2.imread(image_path)
+img = cv2.resize(img, (960, 600))
 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
 # Initialize the ArUco dictionary
@@ -48,9 +49,10 @@ if ids is not None and len(corners) > 0:
         # Print the coordinates in the base frame
         print(f"Marker ID {ids[i]} in base frame:")
         print(f"  Origin: {t_base}")
-
+    
     # Show the image with markers and axes drawn
     while True:
+        
         cv2.imshow("Detected ArUco Markers", img)
         if cv2.waitKey(1) & 0xFF == ord('q'):  # Press 'q' to quit
             break

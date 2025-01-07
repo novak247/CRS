@@ -30,6 +30,7 @@ class HoleTransformer:
         self.T_base_to_camera[2,2] = -1
         self.T_camera_to_board_lower = []
         self.T_camera_to_board_higher = []
+        self.board_rot = [1, 1]
 
     def load_csv(self, file_path):
         """
@@ -162,6 +163,12 @@ class HoleTransformer:
                 self.T_camera_to_board_lower.append(T_camera_to_board_lower) 
                 self.T_camera_to_board_higher.append(T_camera_to_board_higher)
 
+                T_base_to_board_lower = self.T_base_to_camera @ T_camera_to_board_lower
+                tvec_lower = T_base_to_board_lower[:3, 3]
+                T_base_to_board_higher = self.T_base_to_camera @ T_camera_to_board_higher
+                tvec_higher = T_base_to_board_higher[:3, 3]
+                if tvec_higher[0] < tvec_lower[0]:
+                    self.board_rot[board_id] = -1
                 # Load hole positions
                 hole_positions = self.load_csv(f"positions_plate_0{id_low}-0{id_high}.csv")  # Adjust for board-specific CSV
 
